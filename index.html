@@ -29,6 +29,9 @@
   .chk{font-size:12px; display:flex; align-items:center; gap:6px; cursor:pointer; color:var(--muted);}
   .chk.top{font-weight:600; border-top:1px solid var(--line); padding-top:9px;}
   .sw{width:11px; height:11px; border-radius:2px; display:inline-block; flex:0 0 auto;}
+  .arow{display:flex; align-items:center; gap:7px;}
+  .arow .chk.cf{gap:2px; flex:0 0 auto;}
+  .arow .chk.rt{flex:1;}
   .areas{overflow-y:auto; display:flex; flex-direction:column; gap:5px; padding-right:4px;}
   .chk .cnt{margin-left:auto; color:var(--faint); font-size:11px; font-family:Consolas,monospace;}
   .rt-mk{border-radius:50%; color:#fff; text-align:center; font:700 7px/12px system-ui;
@@ -49,8 +52,8 @@
 <div class="panel">
   <div class="panel-head"><span class="ic">⌖</span>Merchandiser routes — BKK</div>
   <div class="panel-sub" id="info">loading…</div>
-  <label class="chk top"><input type="checkbox" id="show-coffee" checked> ☕ ร้านกาแฟ <span class="cnt" id="coffee-cnt"></span></label>
   <label class="chk top"><input type="checkbox" id="all-areas" checked> แสดงทุกพื้นที่</label>
+  <div class="panel-sub">☕ = ร้านกาแฟใกล้เส้นทางของเมอร์คนนั้น</div>
   <div class="areas" id="areas"></div>
 </div>
 <script src="routes_data.js"></script>
@@ -98,45 +101,51 @@ names.forEach((area, ai) => {
 document.getElementById('info').textContent =
   `${names.length} พื้นที่ · ${totalStores.toLocaleString()} ร้าน · ${Math.round(totalKm).toLocaleString()} กม.`;
 
-// Per-area toggle list (everything starts ON — show every merchandiser at once).
-const box = document.getElementById('areas');
-const areaChecks = {};
-names.forEach((area, ai) => {
-  const a = DATA[area];
-  const lab = document.createElement('label');
-  lab.className = 'chk';
-  lab.innerHTML = `<input type="checkbox" checked><i class="sw" style="background:${areaColor(ai)}"></i>` +
-                  `${esc(area)}<span class="cnt">${a.n} ร้าน</span>`;
-  const cb = lab.querySelector('input');
-  areaChecks[area] = cb;
-  cb.onchange = () => cb.checked ? areaLayers[area].addTo(map) : map.removeLayer(areaLayers[area]);
-  box.appendChild(lab);
-});
-
-// ── Coffee shops: prominent pin markers on top of the route layer, detail popup ──
+// ── Coffee shops: one layer PER AREA — each shop belongs to its nearest merchandiser
+// route (precomputed `area` + `dist` in coffee_data.js). Toggled by the ☕ checkbox
+// in front of that area's route row.
 const coffeeIcon = L.divIcon({className:'', iconSize:[17, 17], iconAnchor:[8, 17], popupAnchor:[0, -16],
   html:'<div class="cf-mk"><span>☕</span></div>'});
-const coffeeLayer = L.layerGroup();
+const coffeeLayers = {}, coffeeCounts = {};
+names.forEach(area => { coffeeLayers[area] = L.layerGroup().addTo(map); coffeeCounts[area] = 0; });
 (typeof COFFEE !== 'undefined' ? COFFEE : []).forEach(c => {
+  const layer = coffeeLayers[c.area]; if (!layer) return;
+  coffeeCounts[c.area]++;
   const rows = [];
   if (c.addr) rows.push(`<div class="row">📍 ${esc(c.addr)}</div>`);
   if (c.tel)  rows.push(`<div class="row">📞 <a href="tel:${esc(c.tel)}">${esc(c.tel)}</a></div>`);
   if (c.web)  rows.push(`<div class="row">🔗 <a href="${esc(c.web)}" target="_blank">${esc(c.web)}</a></div>`);
+  rows.push(`<div class="row">🛵 ใกล้ route <b>${esc(c.area)}</b> ~${c.dist.toLocaleString()} ม.</div>`);
   L.marker([c.lat, c.lon], {icon:coffeeIcon, zIndexOffset:1000}).bindPopup(
     `<div class="cf-pop"><b>☕ ${esc(c.n)}</b>` +
     (c.en && c.en !== c.n ? `<div class="en">${esc(c.en)}</div>` : '') +
-    rows.join('') + `</div>`, {maxWidth:280}).addTo(coffeeLayer);
+    rows.join('') + `</div>`, {maxWidth:280}).addTo(layer);
 });
-coffeeLayer.addTo(map);
-document.getElementById('coffee-cnt').textContent = `${(typeof COFFEE !== 'undefined' ? COFFEE.length : 0).toLocaleString()} ร้าน`;
-document.getElementById('show-coffee').onchange = e =>
-  e.target.checked ? coffeeLayer.addTo(map) : map.removeLayer(coffeeLayer);
+
+// Per-area rows: [☕ coffee toggle] [route toggle + swatch + name + store count].
+const box = document.getElementById('areas');
+const areaChecks = {}, coffeeChecks = {};
+names.forEach((area, ai) => {
+  const a = DATA[area];
+  const row = document.createElement('div');
+  row.className = 'arow';
+  row.innerHTML =
+    `<label class="chk cf" title="ร้านกาแฟใกล้ route ${esc(area)} (${coffeeCounts[area]} ร้าน)">` +
+      `<input type="checkbox" checked>☕</label>` +
+    `<label class="chk rt"><input type="checkbox" checked>` +
+      `<i class="sw" style="background:${areaColor(ai)}"></i>${esc(area)}<span class="cnt">${a.n} ร้าน</span></label>`;
+  const [cfCb, rtCb] = row.querySelectorAll('input');
+  coffeeChecks[area] = cfCb;
+  areaChecks[area] = rtCb;
+  cfCb.onchange = () => cfCb.checked ? coffeeLayers[area].addTo(map) : map.removeLayer(coffeeLayers[area]);
+  rtCb.onchange = () => rtCb.checked ? areaLayers[area].addTo(map) : map.removeLayer(areaLayers[area]);
+  box.appendChild(row);
+});
 
 document.getElementById('all-areas').onchange = e => {
   names.forEach(area => {
-    if (areaChecks[area].checked !== e.target.checked) {
-      areaChecks[area].checked = e.target.checked;
-      areaChecks[area].onchange();
+    for (const cb of [areaChecks[area], coffeeChecks[area]]) {
+      if (cb.checked !== e.target.checked) { cb.checked = e.target.checked; cb.onchange(); }
     }
   });
 };

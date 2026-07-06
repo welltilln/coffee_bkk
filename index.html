@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Merchandiser Routes — BKK</title>
+<link rel="stylesheet" href="leaflet/leaflet.css">
+<script src="leaflet/leaflet.js"></script>
+<style>
+  :root{
+    --panel-bg:rgba(255,255,255,.92);
+    --line:rgba(0,0,0,.12);
+    --muted:#555;
+    --faint:#777;
+  }
+  html,body{height:100%; margin:0; font-family:system-ui,'Segoe UI',sans-serif;}
+  #map{position:absolute; inset:0;}
+  .panel{
+    position:absolute; top:14px; left:14px; z-index:1000;
+    width:240px; max-height:calc(100vh - 28px);
+    display:flex; flex-direction:column; gap:9px;
+    background:var(--panel-bg); backdrop-filter:blur(6px);
+    border:1px solid var(--line); border-radius:12px;
+    padding:14px; box-shadow:0 4px 18px rgba(0,0,0,.18);
+  }
+  .panel-head{font-weight:600; font-size:14px; display:flex; align-items:center; gap:8px;}
+  .panel-head .ic{color:#e0564a;}
+  .panel-sub{color:var(--faint); font-size:11.5px; font-family:Consolas,monospace; line-height:1.4;}
+  .chk{font-size:12px; display:flex; align-items:center; gap:6px; cursor:pointer; color:var(--muted);}
+  .chk.top{font-weight:600; border-top:1px solid var(--line); padding-top:9px;}
+  .areas{overflow-y:auto; display:flex; flex-direction:column; gap:5px; padding-right:4px;}
+  .chk .cnt{margin-left:auto; color:var(--faint); font-size:11px; font-family:Consolas,monospace;}
+  .rt-mk{border-radius:50%; color:#fff; text-align:center; font:700 7px/12px system-ui;
+         width:12px; height:12px; border:1px solid #fff; box-shadow:0 0 2px rgba(0,0,0,.5); opacity:.9;}
+  .cf-mk{border-radius:50% 50% 50% 0; transform:rotate(-45deg); width:26px; height:26px;
+         background:linear-gradient(145deg,#7a4a21,#4b2c12); border:2px solid #fff;
+         box-shadow:0 2px 6px rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center;}
+  .cf-mk span{transform:rotate(45deg); font-size:14px; line-height:1;}
+  .leaflet-popup-content{font-size:12.5px; line-height:1.5;}
+  .cf-pop b{font-size:13.5px;}
+  .cf-pop .en{color:var(--faint); font-size:11.5px;}
+  .cf-pop .row{margin-top:4px;}
+  .cf-pop a{color:#7a4a21; word-break:break-all;}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="panel">
+  <div class="panel-head"><span class="ic">⌖</span>Merchandiser routes — BKK</div>
+  <div class="panel-sub" id="info">loading…</div>
+  <label class="chk top"><input type="checkbox" id="show-coffee" checked> ☕ ร้านกาแฟ <span class="cnt" id="coffee-cnt"></span></label>
+  <label class="chk top"><input type="checkbox" id="all-areas" checked> แสดงทุกพื้นที่</label>
+  <div class="areas" id="areas"></div>
+</div>
+<script src="routes_data.js"></script>
+<script src="coffee_data.js"></script>
+<script>
+// Standalone BKK route map — same rendering as the Sharemer Dashboard Coverage & Geo page
+// (per-day colors, numbered stop markers, store-name popups), but every BKK merchandiser
+// is drawn at once instead of one selected area.
+const map = L.map('map', {zoomControl:false}).setView([13.7, 100.5], 11);
+L.control.zoom({position:'topright'}).addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  {maxZoom:19, attribution:'© OpenStreetMap'}).addTo(map);
+
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const names = Object.keys(DATA).sort();
+
+const areaLayers = {};   // area → layerGroup (all its days: lines + numbered markers)
+const bounds = [];
+let totalStores = 0, totalKm = 0;
+
+names.forEach(area => {
+  const a = DATA[area];
+  const grp = L.layerGroup();
+  (a.days || []).forEach(dd => {
+    const line = [];
+    dd.stops.forEach(s => {
+      line.push([s.lat, s.lon]);
+      const icon = L.divIcon({className:'', iconSize:[12, 12],
+        html:`<div class="rt-mk" style="background:${dd.color}">${s.seq}</div>`});
+      L.marker([s.lat, s.lon], {icon}).bindPopup(
+        `${esc(area)} · Day ${dd.day} · #${s.seq}<br><b>${esc(s.name)}</b>${s.id ? ` (${s.id})` : ''}`).addTo(grp);
+    });
+    const path = (dd.geometry && dd.geometry.length > 1) ? dd.geometry : line;   // on-road if baked, else straight
+    L.polyline(path, {color:dd.color, weight:3, opacity:.65}).addTo(grp);
+    totalKm += dd.km || 0;
+  });
+  if (a.center) bounds.push(a.center);
+  totalStores += a.n || 0;
+  areaLayers[area] = grp.addTo(map);
+});
+
+document.getElementById('info').textContent =
+  `${names.length} พื้นที่ · ${totalStores.toLocaleString()} ร้าน · ${Math.round(totalKm).toLocaleString()} กม.`;
+
+// Per-area toggle list (everything starts ON — show every merchandiser at once).
+const box = document.getElementById('areas');
+const areaChecks = {};
+names.forEach(area => {
+  const a = DATA[area];
+  const lab = document.createElement('label');
+  lab.className = 'chk';
+  lab.innerHTML = `<input type="checkbox" checked>${esc(area)}<span class="cnt">${a.n} ร้าน</span>`;
+  const cb = lab.querySelector('input');
+  areaChecks[area] = cb;
+  cb.onchange = () => cb.checked ? areaLayers[area].addTo(map) : map.removeLayer(areaLayers[area]);
+  box.appendChild(lab);
+});
+
+// ── Coffee shops: prominent pin markers on top of the route layer, detail popup ──
+const coffeeIcon = L.divIcon({className:'', iconSize:[26, 26], iconAnchor:[13, 26], popupAnchor:[0, -24],
+  html:'<div class="cf-mk"><span>☕</span></div>'});
+const coffeeLayer = L.layerGroup();
+(typeof COFFEE !== 'undefined' ? COFFEE : []).forEach(c => {
+  const rows = [];
+  if (c.addr) rows.push(`<div class="row">📍 ${esc(c.addr)}</div>`);
+  if (c.tel)  rows.push(`<div class="row">📞 <a href="tel:${esc(c.tel)}">${esc(c.tel)}</a></div>`);
+  if (c.web)  rows.push(`<div class="row">🔗 <a href="${esc(c.web)}" target="_blank">${esc(c.web)}</a></div>`);
+  L.marker([c.lat, c.lon], {icon:coffeeIcon, zIndexOffset:1000}).bindPopup(
+    `<div class="cf-pop"><b>☕ ${esc(c.n)}</b>` +
+    (c.en && c.en !== c.n ? `<div class="en">${esc(c.en)}</div>` : '') +
+    rows.join('') + `</div>`, {maxWidth:280}).addTo(coffeeLayer);
+});
+coffeeLayer.addTo(map);
+document.getElementById('coffee-cnt').textContent = `${(typeof COFFEE !== 'undefined' ? COFFEE.length : 0).toLocaleString()} ร้าน`;
+document.getElementById('show-coffee').onchange = e =>
+  e.target.checked ? coffeeLayer.addTo(map) : map.removeLayer(coffeeLayer);
+
+document.getElementById('all-areas').onchange = e => {
+  names.forEach(area => {
+    if (areaChecks[area].checked !== e.target.checked) {
+      areaChecks[area].checked = e.target.checked;
+      areaChecks[area].onchange();
+    }
+  });
+};
+
+if (bounds.length) map.fitBounds(bounds, {padding:[30, 30]});
+</script>
+</body>
+</html>
